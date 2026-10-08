@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lectio — Checkout</title>
+    <link rel="stylesheet" href="css/lectio.css" />
+  </head>
+  <body class="shell">
+    <header class="topbar">
+      <div class="brand" aria-label="Lectio home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Lectio</span>
+      </div>
+      <nav class="navbar" aria-label="Principal">
+        <a href="index.html" class="nav-a">Inicio</a>
+        <a href="pantallas.html" class="nav-a">Pantallas</a>
+      </nav>
+      <div class="inline-actions">
+        <button class="btn-3" type="button">Seguridad</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <form id="checkoutForm" class="frame" style="max-width: 980px; margin: 30px auto 0; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 24px;">
+        <div>
+          <p class="t-label">Compra segura</p>
+          <h1 class="t-h1" style="margin-top: 8px;">Finalizar compra</h1>
+
+          <div class="stack" style="margin-top: 24px;">
+            <div class="field">
+              <label class="t-label" for="buyer-name">Nombre</label>
+              <input id="buyer-name" type="text" autocomplete="name" required maxlength="70" placeholder="Nombre de quien recibe" />
+            </div>
+
+            <div class="field">
+              <label class="t-label" for="city">Ciudad</label>
+              <select id="city">
+                <option>Bogotá</option>
+                <option>Medellín</option>
+                <option>Cali</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label class="t-label" for="pay">Método de pago</label>
+              <select id="pay">
+                <option>PSE</option>
+                <option>Nequi</option>
+                <option>Tarjeta</option>
+              </select>
+            </div>
+
+            <div class="note">Compra protegida: el vendedor indica la condición del libro y la entrega se confirma antes de enviar el pago.</div>
+          </div>
+        </div>
+
+        <aside class="frame" style="padding: 18px;">
+          <p class="t-label">Resumen</p>
+          <div class="card" style="margin-top: 14px; padding: 16px;">
+            <div class="cover" style="background: linear-gradient(145deg, #F4C95D 0%, #A78BCA 100%); color: var(--ink); min-height: 150px;">La sombra del viento</div>
+            <div class="meta-row" style="margin-top: 12px;">
+              <span class="t-body">Cantidad</span>
+              <span class="t-body">1</span>
+            </div>
+            <div class="meta-row">
+              <span class="t-body">Subtotal</span>
+              <span class="t-body">$59.000</span>
+            </div>
+            <div class="meta-row">
+              <span class="t-body">Envío</span>
+              <span class="t-body">$7.500</span>
+            </div>
+            <div class="meta-row" style="padding-top: 10px; border-top: 1px solid var(--line); margin-top: 10px;">
+              <strong>Total</strong>
+              <strong>$66.500</strong>
+            </div>
+          </div>
+          <button id="confirmPurchase" type="submit" class="btn" style="margin-top: 18px; width: 100%;">Confirmar compra de prueba</button>
+          <p id="purchaseStatus" class="t-support" role="status" aria-live="polite" style="margin-top: 12px;"></p>
+        </aside>
+      </form>
+    </main>
+    <script>
+      (() => {
+        const form = document.getElementById('checkoutForm');
+        const nameInput = document.getElementById('buyer-name');
+        const status = document.getElementById('purchaseStatus');
+        const button = document.getElementById('confirmPurchase');
+        try {
+          const profile = JSON.parse(localStorage.getItem('lectio-profile') || '{}');
+          if (profile.name) nameInput.value = profile.name;
+        } catch { /* Checkout remains usable without saved profile data. */ }
+        form.addEventListener('submit', (event) => {
+          event.preventDefault();
+          if (!form.reportValidity()) return;
+          const order = {
+            book: 'La sombra del viento',
+            buyer: nameInput.value.trim(),
+            city: document.getElementById('city').value,
+            paymentMethod: document.getElementById('pay').value,
+            status: 'demo-pending',
+            createdAt: new Date().toISOString()
+          };
+          try {
+            localStorage.setItem('lectio-last-order', JSON.stringify(order));
+            status.textContent = 'Pedido de prueba registrado en este navegador. No se realizó ningún cobro.';
+            button.textContent = 'Pedido de prueba guardado';
+            button.disabled = true;
+          } catch { status.textContent = 'No pudimos guardar el pedido en este navegador.'; }
+        });
+      })();
+    </script>
+  </body>
+</html>

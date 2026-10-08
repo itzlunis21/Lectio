@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Crea tu perfil de Lectio y encuentra libros que conecten con tus gustos.">
+  <title>Lectio — Tu perfil lector</title>
+  <link rel="stylesheet" href="css/lectio.css">
+  <style>
+    .setup-page { min-height: 100vh; padding-bottom: 48px; background: var(--parchment); }
+    .setup-top { max-width: 1080px; margin: 0 auto; }
+    .setup-main { width: min(100% - 40px, 960px); margin: 34px auto 0; }
+    .setup-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(245px, .75fr); gap: 20px; align-items: stretch; }
+    .setup-card, .setup-aside { padding: clamp(22px, 4vw, 42px); border: 1px solid var(--line); background: rgba(255,255,255,.38); }
+    .setup-aside { display: flex; flex-direction: column; justify-content: space-between; background: var(--aegean); color: var(--parchment); }
+    .setup-aside .t-h2 { color: var(--parchment); }
+    .setup-aside .t-body { color: rgba(244,240,232,.82); }
+    .setup-mark { width: 54px; height: 54px; display: grid; place-items: center; margin-bottom: 30px; border: 1px solid rgba(244,240,232,.36); font: 600 28px Georgia, serif; }
+    .setup-kicker { margin: 0 0 10px; color: var(--aegean); font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; }
+    .setup-aside .setup-kicker { color: #d5c397; }
+    .setup-fields { display: grid; gap: 16px; margin-top: 28px; }
+    .setup-field { display: grid; gap: 7px; }
+    .setup-field label, .setup-legend { color: var(--ink); font-size: .88rem; font-weight: 600; }
+    .setup-field input, .setup-field textarea { width: 100%; min-height: 48px; padding: 11px 13px; border: 1px solid var(--stone); border-radius: 2px; color: var(--ink); background: rgba(255,255,255,.64); font: inherit; }
+    .setup-field textarea { min-height: 92px; resize: vertical; }
+    .setup-field input:focus, .setup-field textarea:focus { outline: 2px solid var(--aegean); outline-offset: 2px; }
+    .setup-help { margin: 0; color: var(--muted); font-size: .76rem; }
+    .setup-options { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+    .setup-choice { min-height: 42px; padding: 8px 13px; border: 1px solid var(--stone); border-radius: 2px; color: var(--ink); background: transparent; cursor: pointer; }
+    .setup-choice[aria-pressed="true"] { border-color: var(--aegean); color: #fff; background: var(--aegean); }
+    .setup-mode { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 13px; }
+    .setup-mode label { position: relative; display: flex; min-height: 76px; align-items: center; gap: 9px; padding: 12px; border: 1px solid var(--stone); cursor: pointer; font-size: .83rem; }
+    .setup-mode input { accent-color: var(--aegean); }
+    .setup-progress { display: flex; align-items: center; gap: 10px; margin: 22px 0 27px; color: var(--muted); font-size: .8rem; }
+    .setup-progress-track { height: 4px; flex: 1; background: var(--paper); }
+    .setup-progress-track span { display: block; width: 50%; height: 100%; background: var(--aegean); transition: width .2s ease; }
+    .setup-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 28px; }
+    .setup-error { min-height: 1.4em; margin: 10px 0 0; color: #9a403a; font-size: .84rem; }
+    .setup-step[hidden], .setup-stage[hidden] { display: none; }
+    .setup-privacy { margin-top: 17px; padding-top: 13px; border-top: 1px solid rgba(183,165,141,.45); color: var(--muted); font-size: .75rem; }
+    @media (max-width: 720px) {
+      .setup-main { width: min(100% - 28px, 540px); margin-top: 20px; }
+      .setup-layout { grid-template-columns: 1fr; }
+      .setup-aside { min-height: auto; padding: 22px; }
+      .setup-aside .t-h2, .setup-aside .t-body { max-width: 480px; }
+      .setup-mark { display: none; }
+      .setup-mode { grid-template-columns: 1fr; }
+      .setup-mode label { min-height: 52px; }
+    }
+  </style>
+</head>
+<body class="setup-page">
+  <header class="topbar setup-top">
+    <a class="brand" href="index.html" aria-label="Lectio, inicio"><span class="brand-mark" aria-hidden="true"></span><span>Lectio</span></a>
+    <a class="nav-a" href="index.html">Volver al inicio</a>
+  </header>
+  <main class="setup-main">
+    <div class="setup-layout">
+      <section class="setup-card" aria-labelledby="setupTitle">
+        <p class="setup-kicker">Tu biblioteca empieza aquí</p>
+        <section class="setup-stage" id="registerStage">
+          <h1 class="t-h1" id="setupTitle">Crea tu perfil lector.</h1>
+          <p class="t-body" style="margin-top: 10px;">Usaremos tus gustos para acercarte una selección más cuidadosa.</p>
+          <form class="setup-fields" id="registrationForm">
+            <div class="setup-field"><label for="readerName">Nombre</label><input id="readerName" name="name" autocomplete="name" required maxlength="70" placeholder="Cómo te llamamos"></div>
+            <div class="setup-field"><label for="readerEmail">Correo electrónico</label><input id="readerEmail" name="email" type="email" autocomplete="email" required maxlength="160" placeholder="tunombre@correo.com"></div>
+            <div class="setup-field"><label for="readerPassword">Contraseña</label><input id="readerPassword" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" placeholder="Al menos 12 caracteres"><p class="setup-help">La contraseña se envía al servidor para guardarse con hash; nunca se guarda en el navegador.</p></div>
+            <button class="btn" type="submit">Continuar <span aria-hidden="true">→</span></button>
+            <p class="setup-error" id="registrationError" role="alert"></p>
+            <button class="nav-a" style="padding-left: 0;" id="showLogin" type="button">¿Ya tienes cuenta? Inicia sesión</button>
+          </form>
+        </section>
+
+        <section class="setup-stage" id="loginStage" hidden aria-labelledby="loginTitle">
+          <p class="setup-kicker">Qué bueno verte de nuevo</p>
+          <h1 class="t-h1" id="loginTitle">Inicia sesión.</h1>
+          <form class="setup-fields" id="loginForm">
+            <div class="setup-field"><label for="loginEmail">Correo electrónico</label><input id="loginEmail" type="email" autocomplete="email" required maxlength="160"></div>
+            <div class="setup-field"><label for="loginPassword">Contraseña</label><input id="loginPassword" type="password" autocomplete="current-password" required maxlength="128"></div>
+            <button class="btn" type="submit">Entrar a Lectio</button>
+            <p class="setup-error" id="loginError" role="alert"></p>
+            <button class="nav-a" style="padding-left: 0;" id="backToRegister" type="button">Crear una cuenta</button>
+          </form>
+        </section>
+
+        <section class="setup-stage setup-step" id="genresStage" hidden aria-labelledby="genresTitle">
+          <div class="setup-progress"><span>Paso 1 de 2</span><span class="setup-progress-track"><span></span></span></div>
+          <p class="setup-kicker">Tus preferencias</p>
+          <h1 class="t-h1" id="genresTitle">¿Qué te gusta leer?</h1>
+          <p class="t-body" style="margin-top: 10px;">Elige los géneros que te llaman la atención. Puedes cambiarlo después.</p>
+          <div class="setup-options" id="genreOptions" role="group" aria-label="Géneros literarios">
+            <button class="setup-choice" type="button" aria-pressed="false">Fantasía</button><button class="setup-choice" type="button" aria-pressed="false">Ciencia ficción</button><button class="setup-choice" type="button" aria-pressed="false">Romántica</button><button class="setup-choice" type="button" aria-pressed="false">No ficción</button><button class="setup-choice" type="button" aria-pressed="false">Clásicos</button><button class="setup-choice" type="button" aria-pressed="false">Misterio</button><button class="setup-choice" type="button" aria-pressed="false">Poesía</button><button class="setup-choice" type="button" aria-pressed="false">Cuento</button>
+          </div>
+          <p class="setup-error" id="genreError" role="alert"></p>
+          <div class="setup-actions"><button class="btn-2" type="button" data-back>Volver</button><button class="btn" type="button" id="continuePreferences">Continuar</button></div>
+          <button class="nav-a" style="margin-top: 14px; padding-left: 0;" type="button" data-skip>Omitir por ahora</button>
+        </section>
+
+        <section class="setup-stage setup-step" id="detailsStage" hidden aria-labelledby="detailsTitle">
+          <div class="setup-progress"><span>Paso 2 de 2</span><span class="setup-progress-track"><span style="width: 100%"></span></span></div>
+          <p class="setup-kicker">Una recomendación con contexto</p>
+          <h1 class="t-h1" id="detailsTitle">Cuéntanos un poco más.</h1>
+          <p class="t-body" style="margin-top: 10px;">Conocer tus autores y tu forma de intercambio ayuda a que la selección tenga sentido.</p>
+          <div class="setup-fields">
+            <div class="setup-field"><label for="favoriteAuthors">¿Qué autores disfrutas?</label><textarea id="favoriteAuthors" maxlength="300" placeholder="Por ejemplo: Pilar Quintana, Gabriel García Márquez"></textarea><p class="setup-help">Puedes escribir varios nombres, separados por coma.</p></div>
+            <fieldset style="margin: 4px 0 0; padding: 0; border: 0;"><legend class="setup-legend">¿Qué tipo de intercambio prefieres?</legend><div class="setup-mode"><label><input type="radio" name="exchangePreference" value="sale"> Solo venta</label><label><input type="radio" name="exchangePreference" value="exchange"> Solo intercambio</label><label><input type="radio" name="exchangePreference" value="both" checked> Ambas opciones</label></div></fieldset>
+          </div>
+          <p class="setup-error" id="saveError" role="alert"></p>
+          <div class="setup-actions"><button class="btn-2" type="button" data-back>Volver</button><button class="btn" type="button" id="finishSetup">Guardar y entrar</button></div>
+          <button class="nav-a" style="margin-top: 14px; padding-left: 0;" type="button" data-skip>Omitir por ahora</button>
+          <p class="setup-privacy">Tus preferencias quedan guardadas en este navegador. No se envían a un servidor.</p>
+        </section>
+      </section>
+      <aside class="setup-aside">
+        <div><div class="setup-mark" aria-hidden="true">L</div><p class="setup-kicker">Lectio · biblioteca viva</p><h2 class="t-h2">Un libro no termina en ti.</h2><p class="t-body" style="margin-top: 12px;">Cada lectura deja una pista. La usamos para ayudarte a encontrar la siguiente y, cuando estés lista, darle otra vida a la anterior.</p></div>
+        <p class="t-support" style="color: rgba(244,240,232,.72);">Una selección breve, pensada para ti.</p>
+      </aside>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const stages = ['registerStage', 'genresStage', 'detailsStage', 'loginStage'].map((id) => document.getElementById(id));
+      const staticDemoMode = location.hostname.endsWith('.github.io') || new URLSearchParams(location.search).get('demo') === '1';
+      const profileKey = staticDemoMode ? 'lectio-demo-profile' : 'lectio-profile';
+      let profile = {};
+      try { profile = JSON.parse(localStorage.getItem(profileKey) || '{}'); } catch { profile = {}; }
+      const nameInput = document.getElementById('readerName');
+      const emailInput = document.getElementById('readerEmail');
+      const authorsInput = document.getElementById('favoriteAuthors');
+      const genreButtons = [...document.querySelectorAll('#genreOptions button')];
+      const selectedGenres = new Set(profile.genres || []);
+      let currentStage = 0;
+      let registrationPassword = '';
+      let existingAccount = false;
+      let csrfToken = '';
+      if (staticDemoMode) {
+        document.querySelector('.setup-privacy').textContent = 'Modo Pages: el perfil de muestra solo se guarda en este navegador; no hay autenticación ni datos compartidos.';
+        document.querySelector('.setup-help').textContent = 'En GitHub Pages, la cuenta es de demostración y la contraseña no se guarda ni se verifica.';
+      }
+
+      nameInput.value = profile.name || '';
+      emailInput.value = profile.email || '';
+      authorsInput.value = profile.authors || '';
+      genreButtons.forEach((button) => {
+        button.setAttribute('aria-pressed', String(selectedGenres.has(button.textContent.trim())));
+        button.addEventListener('click', () => {
+          const genre = button.textContent.trim();
+          if (selectedGenres.has(genre)) selectedGenres.delete(genre); else selectedGenres.add(genre);
+          button.setAttribute('aria-pressed', String(selectedGenres.has(genre)));
+          document.getElementById('genreError').textContent = '';
+        });
+      });
+      if (profile.exchangePreference) {
+        const preference = document.querySelector(`input[name="exchangePreference"][value="${profile.exchangePreference}"]`);
+        if (preference) preference.checked = true;
+      }
+
+      const showStage = (index) => {
+        currentStage = index;
+        stages.forEach((stage, stageIndex) => { stage.hidden = stageIndex !== index; });
+        stages[index]?.querySelector('h1')?.focus({ preventScroll: true });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+      document.getElementById('registrationForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        registrationPassword = document.getElementById('readerPassword').value;
+        document.getElementById('readerPassword').value = '';
+        profile = { ...profile, name: nameInput.value.trim(), email: emailInput.value.trim() };
+        showStage(1);
+        document.getElementById('genresTitle').focus({ preventScroll: true });
+      });
+      document.getElementById('showLogin').addEventListener('click', () => showStage(3));
+      document.getElementById('backToRegister').addEventListener('click', () => showStage(0));
+      document.getElementById('loginForm').addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const error = document.getElementById('loginError');
+        const button = event.currentTarget.querySelector('button[type="submit"]');
+        button.disabled = true;
+        error.textContent = '';
+        try {
+          if (staticDemoMode) {
+            const demoProfile = JSON.parse(localStorage.getItem('lectio-demo-profile') || 'null');
+            if (!demoProfile || demoProfile.email !== document.getElementById('loginEmail').value.trim().toLowerCase()) {
+              throw new Error('No hay un perfil de muestra para ese correo en este navegador. Crea una cuenta de muestra.');
+            }
+            window.location.assign('index.html?demo=1');
+            return;
+          }
+          const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: document.getElementById('loginEmail').value.trim(), password: document.getElementById('loginPassword').value })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'No pudimos iniciar sesión.');
+          document.getElementById('loginPassword').value = '';
+          window.location.assign('index.html');
+        } catch (loginError) {
+          error.textContent = loginError.message === 'Failed to fetch' ? 'No se pudo conectar con Lectio. Inicia el servidor local y vuelve a intentarlo.' : loginError.message;
+        } finally {
+          button.disabled = false;
+        }
+      });
+      document.getElementById('continuePreferences').addEventListener('click', () => {
+        if (!selectedGenres.size) {
+          document.getElementById('genreError').textContent = 'Elige al menos un género o usa “Omitir por ahora”.';
+          return;
+        }
+        showStage(2);
+        document.getElementById('detailsTitle').focus({ preventScroll: true });
+      });
+      document.querySelectorAll('[data-back]').forEach((button) => button.addEventListener('click', () => showStage(Math.max(0, currentStage - 1))));
+      document.querySelectorAll('[data-skip]').forEach((button) => button.addEventListener('click', () => {
+        if (currentStage === 1) showStage(2);
+        else saveProfile();
+      }));
+      document.getElementById('finishSetup').addEventListener('click', saveProfile);
+
+      if (!staticDemoMode) loadExistingAccount();
+
+      async function loadExistingAccount() {
+        try {
+          const response = await fetch('/api/auth/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const result = await response.json();
+          if (!result.authenticated) return;
+          existingAccount = true;
+          csrfToken = result.csrfToken;
+          profile = result.user;
+          nameInput.value = profile.name || '';
+          emailInput.value = profile.email || '';
+          emailInput.readOnly = true;
+          document.getElementById('readerPassword').closest('.setup-field').hidden = true;
+          document.querySelector('#registrationForm button[type="submit"]').textContent = 'Actualizar mis gustos';
+          selectedGenres.clear();
+          (profile.genres || []).forEach((genre) => selectedGenres.add(genre));
+          genreButtons.forEach((button) => button.setAttribute('aria-pressed', String(selectedGenres.has(button.textContent.trim()))));
+          authorsInput.value = profile.authors || '';
+          if (profile.exchangePreference) {
+            const preference = document.querySelector(`input[name="exchangePreference"][value="${profile.exchangePreference}"]`);
+            if (preference) preference.checked = true;
+          }
+          showStage(1);
+        } catch {
+          document.getElementById('registrationError').textContent = 'No pudimos consultar tu sesión. Puedes volver a cargar esta pantalla.';
+        }
+      }
+
+      async function saveProfile() {
+        const preference = document.querySelector('input[name="exchangePreference"]:checked');
+        const updatedProfile = {
+          ...profile,
+          name: nameInput.value.trim(),
+          email: emailInput.value.trim(),
+          genres: [...selectedGenres],
+          authors: authorsInput.value.trim(),
+          exchangePreference: preference ? preference.value : 'both',
+          completedAt: new Date().toISOString()
+        };
+        const error = document.getElementById('saveError');
+        const button = document.getElementById('finishSetup');
+        error.textContent = '';
+        button.disabled = true;
+        try {
+          if (staticDemoMode) {
+            const demoProfile = { ...updatedProfile, email: updatedProfile.email.toLowerCase() };
+            localStorage.setItem('lectio-demo-profile', JSON.stringify(demoProfile));
+            registrationPassword = '';
+            window.location.assign('index.html?demo=1');
+            return;
+          }
+          if (existingAccount) {
+            const response = await fetch('/api/profile', {
+              method: 'PUT',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+              body: JSON.stringify(updatedProfile)
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'No pudimos guardar tus preferencias.');
+            window.location.assign('index.html');
+            return;
+          }
+          const response = await fetch('/api/auth/register', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...updatedProfile, password: registrationPassword })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'No pudimos crear tu cuenta.');
+          registrationPassword = '';
+          window.location.assign('index.html?bienvenida=1');
+        } catch (saveError) {
+          error.textContent = saveError.message === 'Failed to fetch' ? 'No se pudo conectar con Lectio. Inicia el servidor y vuelve a intentarlo.' : saveError.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

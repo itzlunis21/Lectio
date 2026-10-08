@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lectio — Libro</title>
+    <link rel="stylesheet" href="css/lectio.css" />
+  </head>
+  <body class="shell">
+    <header class="topbar">
+      <div class="brand" aria-label="Lectio home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Lectio</span>
+      </div>
+      <nav class="navbar" aria-label="Principal">
+        <a href="index.html" class="nav-a">Inicio</a>
+        <a href="pantallas.html" class="nav-a">Pantallas</a>
+      </nav>
+      <div class="inline-actions">
+        <button class="icon-btn" aria-label="Buscar"><span class="i i-search" aria-hidden="true"></span></button>
+        <button class="btn-3" id="saveBook" type="button" aria-pressed="false">Guardar</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="frame" style="max-width: 980px; margin: 30px auto 0;">
+        <div class="stack" style="display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 24px;">
+          <div class="niche" style="margin: 0; min-height: 440px; width: 100%;">
+            <div class="niche-card" style="max-width: 360px;">
+              <div class="cover" style="background: linear-gradient(145deg, #5267D9 0%, #285F63 100%); min-height: 260px;">La sombra del viento</div>
+            </div>
+          </div>
+
+          <div>
+            <p class="t-label">Ficción / Novelista</p>
+            <h1 class="t-h1" style="margin-top: 8px;">La sombra del viento</h1>
+            <p class="t-body" style="margin-top: 10px;">Carlos Ruiz Zafón</p>
+            <div class="meta-row" style="justify-content: flex-start; margin-top: 18px;">
+              <span class="badge">4.9 / 5</span>
+              <span class="badge">Estado: bueno</span>
+            </div>
+
+            <p class="t-body" style="margin-top: 20px;">
+              Un relato de memoria, pérdida y biblioteca que se vuelve un ritual íntimo para quien busca historias que se quedan en la piel.
+            </p>
+
+            <div class="meta-row" style="margin-top: 24px;">
+              <h2 class="t-h2">$59.000</h2>
+              <span class="cond">PSE • Nequi • Tarjeta</span>
+            </div>
+
+            <div class="hero-actions" style="margin-top: 20px;">
+              <a href="Checkout.html" class="btn">Comprar</a>
+              <a href="index.html#intercambio" class="btn-2">Intercambiar</a>
+            </div>
+            <p id="bookSaveStatus" class="t-support" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script>
+      (() => {
+        const button = document.getElementById('saveBook');
+        const status = document.getElementById('bookSaveStatus');
+        const title = 'La sombra del viento';
+        let saved = [];
+        try { saved = JSON.parse(localStorage.getItem('lectio-favorites') || '[]'); } catch { saved = []; }
+        const updateButton = () => {
+          const isSaved = saved.includes(title);
+          button.setAttribute('aria-pressed', String(isSaved));
+          button.textContent = isSaved ? 'Guardado' : 'Guardar';
+        };
+        updateButton();
+        button.addEventListener('click', () => {
+          saved = saved.includes(title) ? saved.filter((item) => item !== title) : [...saved, title];
+          try {
+            localStorage.setItem('lectio-favorites', JSON.stringify(saved));
+            updateButton();
+            status.textContent = saved.includes(title) ? 'Libro guardado en tus favoritos.' : 'Libro retirado de tus favoritos.';
+          } catch { status.textContent = 'No pudimos guardar el cambio en este navegador.'; }
+        });
+      })();
+    </script>
+  </body>
+</html>
