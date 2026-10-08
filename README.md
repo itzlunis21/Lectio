@@ -37,9 +37,20 @@ Los siguientes `git push` a `main` publican actualizaciones automáticamente. No
 
 ## Límite entre Pages y el backend
 
-GitHub Pages no ejecuta Node, SQLite ni endpoints `/api`. El frontend público se puede compartir sin contraseña, pero sus funciones interactivas no comparten cuentas, ofertas, seguimientos, chats ni publicaciones entre visitantes mientras la API no esté desplegada en un host Node con almacenamiento persistente y HTTPS. El backend de este repositorio sirve para desarrollo local; publicar `dist` por sí solo no lo vuelve un servicio multiusuario.
+GitHub Pages no ejecuta Node ni endpoints `/api`; allí Lectio funciona en modo de muestra y los datos quedan en el navegador. Para tener cuentas, ofertas, follows, Plaza y chat compartidos, despliega la API Node con PostgreSQL. El servidor usa SQLite local cuando no existe `DATABASE_URL`, y Postgres cuando se configura.
 
-Antes de abrir la API al público, configura un host Node, un volumen persistente para `LECTIO_DB_PATH`, HTTPS y copias de seguridad. No publiques el archivo SQLite ni secretos.
+## API compartida gratis (Render + Neon)
+
+La plantilla [render.yaml](render.yaml) publica la aplicación completa en Render. La base vive en Neon, así que Render no necesita un disco persistente ni se publica la SQLite local.
+
+1. Crea un proyecto Postgres en [Neon](https://neon.com/) con el plan Free y copia su **pooled connection string**. No pegues ese secreto en GitHub ni en el chat.
+2. En Render, elige **New → Blueprint** y conecta `itzlunis21/Lectio`.
+3. Cuando Render solicite `DATABASE_URL`, pega allí la cadena de Neon como variable secreta. El blueprint configura `npm ci && npm run build`, `node server.mjs` y `/api/health`.
+4. Despliega. Render entrega una URL `https://...onrender.com`; abre `/api/health` para verificarlo y comparte esa URL para las funciones multiusuario.
+
+Neon Free no tiene una fecha fija de borrado, pero tiene límites de almacenamiento/uso y pausa el cómputo inactivo. Render Free también duerme servicios sin tráfico, así que el primer acceso puede tardar. Revisa sus límites actuales antes de invitar a toda una clase. GitHub Pages puede seguir como demo estática.
+
+No publiques `data/`, `.env` ni `DATABASE_URL`.
 
 ## Imágenes
 

@@ -3,6 +3,9 @@ import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
+import pg from 'pg';
+
+const { Pool } = pg;
 
 const port = Number(process.env.PORT || 4178);
 const staticRoot = resolve(process.env.LECTIO_DIST || 'dist');
@@ -12,9 +15,7 @@ const sessionLifetime = 7 * 24 * 60 * 60 * 1000;
 const maxBodyBytes = 32 * 1024;
 const rateBuckets = new Map();
 
-await mkdir(dirname(databasePath), { recursive: true });
-const database = new DatabaseSync(databasePath);
-database.exec(`
+const sqliteSchema = `
   PRAGMA foreign_keys = ON;
   PRAGMA journal_mode = WAL;
   PRAGMA busy_timeout = 5000;
@@ -123,7 +124,45 @@ database.exec(`
     created_at INTEGER NOT NULL,
     PRIMARY KEY(event_id, user_id)
   );
-`);
+`;
+
+const postgresSchema = sqliteSchema
+  .replace(/^\s*PRAGMA[^;]+;\s*/gm, '')
+  .replace(' COLLATE NOCASE', '')
+  .replace(/\b(created_at|updated_at|expires_at) INTEGER\b/g, '$1 BIGINT');
+
+let database;
+let closeDatabase;
+if (process.env.DATABASE_URL) {
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.PG_POOL_MAX || 5),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  });
+  await pool.query(postgresSchema);
+  const postgresSql = (sql) => {
+    let index = 0;
+    return sql.replace(/\?/g, () => `$${++index}`);
+  };
+  database = {
+    prepare(sql) {
+      const statement = postgresSql(sql);
+      return {
+        get: async (...params) => (await pool.query(statement, params)).rows[0],
+        all: async (...params) => (await pool.query(statement, params)).rows,
+        run: async (...params) => ({ changes: (await pool.query(statement, params)).rowCount || 0 }),
+      };
+    },
+  };
+  closeDatabase = () => pool.end();
+} else {
+  await mkdir(dirname(databasePath), { recursive: true });
+  const sqlite = new DatabaseSync(databasePath);
+  sqlite.exec(sqliteSchema);
+  database = sqlite;
+  closeDatabase = () => sqlite.close();
+}
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -249,10 +288,10 @@ function cookieValue(request, name) {
   return '';
 }
 
-function getSession(request) {
+async function getSession(request) {
   const token = cookieValue(request, sessionCookie);
   if (!token || token.length > 128) return null;
-  const row = database.prepare(`
+  const row = await database.prepare(`
     SELECT s.token_hash, s.csrf_token, s.expires_at, u.id, u.name, u.email, u.city,
       u.genres_json, u.authors, u.exchange_preference
     FROM sessions s JOIN users u ON u.id = s.user_id
@@ -275,8 +314,8 @@ function getSession(request) {
   };
 }
 
-function requireSession(request) {
-  const session = getSession(request);
+async function requireSession(request) {
+  const session = await getSession(request);
   if (!session) fail(401, 'Inicia sesión para continuar.');
   return session;
 }
@@ -300,11 +339,11 @@ function clearSessionCookie(response, request) {
   response.setHeader('Set-Cookie', `${sessionCookie}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure}`);
 }
 
-function createSession(response, request, userId) {
+async function createSession(response, request, userId) {
   const token = randomBytes(32).toString('base64url');
   const csrfToken = randomBytes(32).toString('base64url');
   const expiresAt = now() + sessionLifetime;
-  database.prepare('INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at) VALUES (?, ?, ?, ?)')
+  await database.prepare('INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at) VALUES (?, ?, ?, ?)')
     .run(hash(token), userId, csrfToken, expiresAt);
   setSessionCookie(response, request, token, Math.floor(sessionLifetime / 1000));
   return csrfToken;
@@ -322,8 +361,8 @@ function normalizeEmail(value) {
   return email;
 }
 
-function ensureNotBlocked(userId, otherId) {
-  const block = database.prepare(`
+async function ensureNotBlocked(userId, otherId) {
+  const block = await database.prepare(`
     SELECT 1 FROM blocks
     WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)
   `).get(userId, otherId, otherId, userId);
@@ -340,8 +379,8 @@ function publicUser(row) {
   };
 }
 
-function getBootstrap(userId) {
-  const userRow = database.prepare(`
+async function getBootstrap(userId) {
+  const userRow = await database.prepare(`
     SELECT id, name, email, city, genres_json, authors, exchange_preference
     FROM users WHERE id = ?
   `).get(userId);
@@ -350,7 +389,7 @@ function getBootstrap(userId) {
     email: userRow.email,
     exchangePreference: userRow.exchange_preference,
   };
-  const offers = database.prepare(`
+  const offers = await database.prepare(`
     SELECT o.id, o.user_id AS ownerId, o.title, o.author, o.condition, o.mode, o.price, o.status,
       o.created_at AS createdAt, u.name AS owner, u.city
     FROM offers o JOIN users u ON u.id = o.user_id
@@ -362,23 +401,23 @@ function getBootstrap(userId) {
       )
     ORDER BY o.created_at DESC LIMIT 100
   `).all(userId, userId);
-  const incomingRequests = database.prepare(`
+  const incomingRequests = (await database.prepare(`
     SELECT r.id, r.offer_id AS offerId, r.requester_id AS readerId, r.offered_book AS offeredBook,
       r.status, r.created_at AS createdAt, o.title, u.name AS reader, u.city
     FROM exchange_requests r
     JOIN offers o ON o.id = r.offer_id
     JOIN users u ON u.id = r.requester_id
     WHERE r.owner_id = ? ORDER BY r.created_at DESC LIMIT 100
-  `).all(userId).map((request) => ({ ...request, reader: `${request.reader} · ${request.city}` }));
-  const sentRequests = database.prepare(`
+  `).all(userId)).map((request) => ({ ...request, reader: `${request.reader} · ${request.city}` }));
+  const sentRequests = (await database.prepare(`
     SELECT r.id, r.offer_id AS offerId, r.status, r.created_at AS createdAt,
       o.title AS bookTitle, u.name AS recipient
     FROM exchange_requests r
     JOIN offers o ON o.id = r.offer_id
     JOIN users u ON u.id = r.owner_id
     WHERE r.requester_id = ? ORDER BY r.created_at DESC LIMIT 100
-  `).all(userId).map((request) => ({ ...request, to: request.recipient }));
-  const posts = database.prepare(`
+  `).all(userId)).map((request) => ({ ...request, to: request.recipient }));
+  const posts = await database.prepare(`
     SELECT p.id, p.user_id AS authorId, p.book, p.body AS text, p.created_at AS createdAt,
       u.name AS author, u.city
     FROM community_posts p JOIN users u ON u.id = p.user_id
@@ -391,20 +430,20 @@ function getBootstrap(userId) {
   `).all(userId, userId);
   const postIds = posts.map((post) => post.id);
   const comments = {};
-  const likes = database.prepare('SELECT post_id FROM likes WHERE user_id = ?').all(userId).map((row) => row.post_id);
+  const likes = (await database.prepare('SELECT post_id FROM likes WHERE user_id = ?').all(userId)).map((row) => row.post_id);
   for (const postId of postIds) {
-    comments[postId] = database.prepare(`
+    comments[postId] = await database.prepare(`
       SELECT c.id, c.body AS text, c.created_at AS createdAt, u.name AS author
       FROM comments c JOIN users u ON u.id = c.user_id
       WHERE c.post_id = ? ORDER BY c.created_at ASC LIMIT 100
     `).all(postId);
   }
-  const following = database.prepare('SELECT followed_id FROM follows WHERE follower_id = ?').all(userId).map((row) => row.followed_id);
-  const blockedUsers = database.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?').all(userId).map((row) => row.blocked_id);
-  const blockedReaders = database.prepare(`
+  const following = (await database.prepare('SELECT followed_id FROM follows WHERE follower_id = ?').all(userId)).map((row) => row.followed_id);
+  const blockedUsers = (await database.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?').all(userId)).map((row) => row.blocked_id);
+  const blockedReaders = await database.prepare(`
     SELECT u.id, u.name FROM blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = ?
   `).all(userId);
-  const readers = database.prepare(`
+  const readers = (await database.prepare(`
     SELECT u.id, u.name, u.city, u.genres_json
     FROM users u
     WHERE u.id <> ?
@@ -414,14 +453,14 @@ function getBootstrap(userId) {
           (b.blocker_id = u.id AND b.blocked_id = ?)
       )
     ORDER BY u.created_at DESC LIMIT 50
-  `).all(userId, userId, userId).map((row) => ({
+  `).all(userId, userId, userId)).map((row) => ({
     id: row.id,
     name: row.name,
     city: row.city,
     genres: JSON.parse(row.genres_json),
     following: following.includes(row.id),
   }));
-  const readingRow = database.prepare(`
+  const readingRow = await database.prepare(`
     SELECT title, author, page, total, note, updated_at AS updatedAt
     FROM reading_entries WHERE user_id = ?
   `).get(userId);
@@ -438,17 +477,17 @@ function getBootstrap(userId) {
     blockedReaders,
     readers,
     reading: readingRow || null,
-    reservedEvents: database.prepare('SELECT event_id FROM event_reservations WHERE user_id = ?').all(userId).map((row) => row.event_id),
+    reservedEvents: (await database.prepare('SELECT event_id FROM event_reservations WHERE user_id = ?').all(userId)).map((row) => row.event_id),
   };
 }
 
-function requireRequestParticipant(requestId, userId) {
-  const request = database.prepare(`
+async function requireRequestParticipant(requestId, userId) {
+  const request = await database.prepare(`
     SELECT id, requester_id AS requesterId, owner_id AS ownerId, status
     FROM exchange_requests WHERE id = ?
   `).get(requestId);
   if (!request || (request.requesterId !== userId && request.ownerId !== userId)) fail(404, 'La solicitud no está disponible.');
-  ensureNotBlocked(request.requesterId, request.ownerId);
+  await ensureNotBlocked(request.requesterId, request.ownerId);
   if (request.status !== 'accepted') fail(403, 'El chat requiere una solicitud aceptada.');
   return request;
 }
@@ -470,7 +509,7 @@ async function handleAuth(request, response, url) {
     const salt = randomBytes(16);
     const passwordHash = scryptSync(password, salt, 64);
     try {
-      database.prepare(`
+      await database.prepare(`
         INSERT INTO users (id, name, email, password_salt, password_hash, genres_json, authors, exchange_preference, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(userId, name, email, salt.toString('hex'), passwordHash.toString('hex'), JSON.stringify(genres), authors, exchangePreference, now());
@@ -478,8 +517,8 @@ async function handleAuth(request, response, url) {
       if (String(error.message).includes('UNIQUE')) fail(409, 'Ya existe una cuenta con ese correo. Inicia sesión.');
       throw error;
     }
-    const csrfToken = createSession(response, request, userId);
-    return sendJson(response, request, 201, { user: getBootstrap(userId).user, csrfToken });
+    const csrfToken = await createSession(response, request, userId);
+    return sendJson(response, request, 201, { user: (await getBootstrap(userId)).user, csrfToken });
   }
   if (request.method === 'POST' && pathname === '/api/auth/login') {
     assertSameOrigin(request);
@@ -487,20 +526,20 @@ async function handleAuth(request, response, url) {
     const body = await readJson(request);
     const email = normalizeEmail(body.email);
     const password = textField(body.password, 'Contraseña', 1, 128);
-    const user = database.prepare('SELECT id, password_salt, password_hash FROM users WHERE email = ? COLLATE NOCASE').get(email);
+    const user = await database.prepare('SELECT id, password_salt, password_hash FROM users WHERE email = ?').get(email);
     if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) fail(401, 'Correo o contraseña incorrectos.');
-    const csrfToken = createSession(response, request, user.id);
-    return sendJson(response, request, 200, { user: getBootstrap(user.id).user, csrfToken });
+    const csrfToken = await createSession(response, request, user.id);
+    return sendJson(response, request, 200, { user: (await getBootstrap(user.id)).user, csrfToken });
   }
   if (request.method === 'GET' && pathname === '/api/auth/me') {
-    const session = getSession(request);
+    const session = await getSession(request);
     if (!session) return sendJson(response, request, 200, { authenticated: false });
     return sendJson(response, request, 200, { authenticated: true, user: session.user, csrfToken: session.csrfToken });
   }
   if (request.method === 'POST' && pathname === '/api/auth/logout') {
-    const session = requireSession(request);
+    const session = await requireSession(request);
     requireCsrf(request, session);
-    database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(session.tokenHash);
+    await database.prepare('DELETE FROM sessions WHERE token_hash = ?').run(session.tokenHash);
     clearSessionCookie(response, request);
     return sendJson(response, request, 200, { ok: true });
   }
@@ -514,14 +553,14 @@ async function handleApi(request, response, url) {
     return sendJson(response, request, 200, { ok: true, service: 'lectio-api' });
   }
 
-  const session = requireSession(request);
+  const session = await requireSession(request);
   const userId = session.user.id;
   const method = request.method;
   const parts = url.pathname.split('/').filter(Boolean).map((part) => decodeURIComponent(part));
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) requireCsrf(request, session);
 
   if (method === 'GET' && url.pathname === '/api/bootstrap') {
-    return sendJson(response, request, 200, getBootstrap(userId));
+    return sendJson(response, request, 200, await getBootstrap(userId));
   }
 
   if (method === 'PUT' && url.pathname === '/api/profile') {
@@ -533,9 +572,9 @@ async function handleApi(request, response, url) {
       ? [...new Set(body.genres.filter((genre) => typeof genre === 'string').map((genre) => genre.trim()).filter(Boolean))].slice(0, 12)
       : [];
     const preference = ['sale', 'exchange', 'both'].includes(body.exchangePreference) ? body.exchangePreference : 'both';
-    database.prepare(`UPDATE users SET name=?,city=?,genres_json=?,authors=?,exchange_preference=? WHERE id=?`)
+    await database.prepare(`UPDATE users SET name=?,city=?,genres_json=?,authors=?,exchange_preference=? WHERE id=?`)
       .run(name, city, JSON.stringify(genres), authors, preference, userId);
-    return sendJson(response, request, 200, { user: getBootstrap(userId).user });
+    return sendJson(response, request, 200, { user: (await getBootstrap(userId)).user });
   }
 
   if (method === 'PUT' && url.pathname === '/api/reading') {
@@ -546,7 +585,7 @@ async function handleApi(request, response, url) {
     const page = Number(body.page);
     const total = Number(body.total);
     if (!Number.isInteger(page) || !Number.isInteger(total) || total < 1 || page < 0 || page > total) fail(400, 'El avance de lectura no es válido.');
-    database.prepare(`
+    await database.prepare(`
       INSERT INTO reading_entries (user_id, title, author, page, total, note, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET title=excluded.title, author=excluded.author,
@@ -567,30 +606,30 @@ async function handleApi(request, response, url) {
     const price = Number(body.price || 0);
     if (!Number.isSafeInteger(price) || price < 0 || (mode !== 'exchange' && price < 500)) fail(400, 'El precio debe ser mayor que cero para una venta.');
     const id = randomUUID();
-    database.prepare(`INSERT INTO offers (id,user_id,title,author,condition,mode,price,created_at) VALUES (?,?,?,?,?,?,?,?)`)
+    await database.prepare(`INSERT INTO offers (id,user_id,title,author,condition,mode,price,created_at) VALUES (?,?,?,?,?,?,?,?)`)
       .run(id, userId, title, author, condition, mode, price, now());
-    return sendJson(response, request, 201, { offer: database.prepare('SELECT * FROM offers WHERE id = ?').get(id) });
+    return sendJson(response, request, 201, { offer: await database.prepare('SELECT * FROM offers WHERE id = ?').get(id) });
   }
 
   if (parts[0] === 'api' && parts[1] === 'offers' && parts.length === 3 && method === 'DELETE') {
     const offerId = parts[2];
-    const result = database.prepare(`UPDATE offers SET status='closed' WHERE id=? AND user_id=? AND status='open'`).run(offerId, userId);
+    const result = await database.prepare(`UPDATE offers SET status='closed' WHERE id=? AND user_id=? AND status='open'`).run(offerId, userId);
     if (!result.changes) fail(404, 'La oferta no está disponible.');
-    database.prepare(`UPDATE exchange_requests SET status='cancelled', updated_at=? WHERE offer_id=? AND status='pending'`).run(now(), offerId);
+    await database.prepare(`UPDATE exchange_requests SET status='cancelled', updated_at=? WHERE offer_id=? AND status='pending'`).run(now(), offerId);
     return sendJson(response, request, 200, { ok: true });
   }
 
   if (parts[0] === 'api' && parts[1] === 'offers' && parts.length === 4 && parts[3] === 'requests' && method === 'POST') {
     rateLimit(request, `requests:${userId}`, 12, 60 * 60 * 1000);
-    const offer = database.prepare(`SELECT id,user_id,title,mode,status FROM offers WHERE id=?`).get(parts[2]);
+    const offer = await database.prepare(`SELECT id,user_id,title,mode,status FROM offers WHERE id=?`).get(parts[2]);
     if (!offer || offer.status !== 'open' || offer.mode === 'sale' || offer.user_id === userId) fail(404, 'La oferta no está disponible para intercambio.');
-    ensureNotBlocked(userId, offer.user_id);
+    await ensureNotBlocked(userId, offer.user_id);
     const body = await readJson(request);
     const offeredBook = textField(body.offeredBook, 'Libro ofrecido', 1, 100);
     checkNoContact(offeredBook);
     const id = randomUUID();
     try {
-      database.prepare(`INSERT INTO exchange_requests (id,offer_id,requester_id,owner_id,offered_book,status,created_at,updated_at) VALUES (?,?,?,?,?,'pending',?,?)`)
+      await database.prepare(`INSERT INTO exchange_requests (id,offer_id,requester_id,owner_id,offered_book,status,created_at,updated_at) VALUES (?,?,?,?,?,'pending',?,?)`)
         .run(id, offer.id, userId, offer.user_id, offeredBook, now(), now());
     } catch (error) {
       if (String(error.message).includes('UNIQUE')) fail(409, 'Ya enviaste una solicitud para esta oferta.');
@@ -603,26 +642,26 @@ async function handleApi(request, response, url) {
     const body = await readJson(request);
     const decision = body.decision;
     if (!['accept', 'reject'].includes(decision)) fail(400, 'La decisión no es válida.');
-    const requestRow = database.prepare(`SELECT id, requester_id, owner_id, status FROM exchange_requests WHERE id=?`).get(parts[2]);
+    const requestRow = await database.prepare(`SELECT id, requester_id, owner_id, status FROM exchange_requests WHERE id=?`).get(parts[2]);
     if (!requestRow || requestRow.owner_id !== userId || requestRow.status !== 'pending') fail(404, 'La solicitud no está disponible.');
-    ensureNotBlocked(userId, requestRow.requester_id);
-    database.prepare(`UPDATE exchange_requests SET status=?, updated_at=? WHERE id=? AND owner_id=? AND status='pending'`)
+    await ensureNotBlocked(userId, requestRow.requester_id);
+    await database.prepare(`UPDATE exchange_requests SET status=?, updated_at=? WHERE id=? AND owner_id=? AND status='pending'`)
       .run(decision === 'accept' ? 'accepted' : 'rejected', now(), requestRow.id, userId);
     return sendJson(response, request, 200, { ok: true, status: decision === 'accept' ? 'accepted' : 'rejected' });
   }
 
   if (parts[0] === 'api' && parts[1] === 'requests' && parts.length === 4 && parts[3] === 'cancel' && method === 'POST') {
-    const requestRow = database.prepare(`SELECT id,requester_id,status FROM exchange_requests WHERE id=?`).get(parts[2]);
+    const requestRow = await database.prepare(`SELECT id,requester_id,status FROM exchange_requests WHERE id=?`).get(parts[2]);
     if (!requestRow || requestRow.requester_id !== userId || requestRow.status !== 'pending') fail(404, 'La solicitud no está disponible para cancelar.');
-    database.prepare(`UPDATE exchange_requests SET status='cancelled',updated_at=? WHERE id=? AND requester_id=? AND status='pending'`)
+    await database.prepare(`UPDATE exchange_requests SET status='cancelled',updated_at=? WHERE id=? AND requester_id=? AND status='pending'`)
       .run(now(), requestRow.id, userId);
     return sendJson(response, request, 200, { ok: true, status: 'cancelled' });
   }
 
   if (parts[0] === 'api' && parts[1] === 'requests' && parts.length === 4 && parts[3] === 'messages') {
-    const exchange = requireRequestParticipant(parts[2], userId);
+    const exchange = await requireRequestParticipant(parts[2], userId);
     if (method === 'GET') {
-      const messages = database.prepare(`
+      const messages = await database.prepare(`
         SELECT m.id,m.body AS text,m.created_at AS createdAt,m.sender_id AS senderId,u.name AS author
         FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.request_id=? ORDER BY m.created_at ASC LIMIT 200
       `).all(exchange.id);
@@ -634,7 +673,7 @@ async function handleApi(request, response, url) {
       const message = textField(body.text, 'Mensaje', 1, 600);
       checkNoContact(message);
       const id = randomUUID();
-      database.prepare('INSERT INTO messages (id,request_id,sender_id,body,created_at) VALUES (?,?,?,?,?)')
+      await database.prepare('INSERT INTO messages (id,request_id,sender_id,body,created_at) VALUES (?,?,?,?,?)')
         .run(id, exchange.id, userId, message, now());
       return sendJson(response, request, 201, { id });
     }
@@ -647,55 +686,55 @@ async function handleApi(request, response, url) {
     const book = textField(body.book || '', 'Libro', 0, 100, true);
     checkNoContact(`${text} ${book}`);
     const id = randomUUID();
-    database.prepare('INSERT INTO community_posts (id,user_id,book,body,created_at) VALUES (?,?,?,?,?)').run(id, userId, book, text, now());
+    await database.prepare('INSERT INTO community_posts (id,user_id,book,body,created_at) VALUES (?,?,?,?,?)').run(id, userId, book, text, now());
     return sendJson(response, request, 201, { id });
   }
 
   if (parts[0] === 'api' && parts[1] === 'community' && parts[2] === 'posts' && parts.length === 5 && parts[4] === 'comments' && method === 'POST') {
     rateLimit(request, `comments:${userId}`, 30, 60 * 60 * 1000);
-    const post = database.prepare('SELECT id,user_id FROM community_posts WHERE id=?').get(parts[3]);
+    const post = await database.prepare('SELECT id,user_id FROM community_posts WHERE id=?').get(parts[3]);
     if (!post) fail(404, 'La publicación no está disponible.');
-    ensureNotBlocked(userId, post.user_id);
+    await ensureNotBlocked(userId, post.user_id);
     const body = await readJson(request);
     const text = textField(body.text, 'Comentario', 1, 280);
     checkNoContact(text);
     const id = randomUUID();
-    database.prepare('INSERT INTO comments (id,post_id,user_id,body,created_at) VALUES (?,?,?,?,?)').run(id, post.id, userId, text, now());
+    await database.prepare('INSERT INTO comments (id,post_id,user_id,body,created_at) VALUES (?,?,?,?,?)').run(id, post.id, userId, text, now());
     return sendJson(response, request, 201, { id });
   }
 
   if (parts[0] === 'api' && parts[1] === 'community' && parts[2] === 'posts' && parts.length === 5 && parts[4] === 'like' && method === 'POST') {
-    const post = database.prepare('SELECT id,user_id FROM community_posts WHERE id=?').get(parts[3]);
+    const post = await database.prepare('SELECT id,user_id FROM community_posts WHERE id=?').get(parts[3]);
     if (!post) fail(404, 'La publicación no está disponible.');
-    ensureNotBlocked(userId, post.user_id);
-    const existing = database.prepare('SELECT 1 FROM likes WHERE post_id=? AND user_id=?').get(post.id, userId);
-    if (existing) database.prepare('DELETE FROM likes WHERE post_id=? AND user_id=?').run(post.id, userId);
-    else database.prepare('INSERT INTO likes (post_id,user_id,created_at) VALUES (?,?,?)').run(post.id, userId, now());
+    await ensureNotBlocked(userId, post.user_id);
+    const existing = await database.prepare('SELECT 1 FROM likes WHERE post_id=? AND user_id=?').get(post.id, userId);
+    if (existing) await database.prepare('DELETE FROM likes WHERE post_id=? AND user_id=?').run(post.id, userId);
+    else await database.prepare('INSERT INTO likes (post_id,user_id,created_at) VALUES (?,?,?)').run(post.id, userId, now());
     return sendJson(response, request, 200, { liked: !existing });
   }
 
   if (parts[0] === 'api' && parts[1] === 'community' && parts[2] === 'follows' && parts.length === 4 && method === 'POST') {
     const targetId = parts[3];
     if (targetId === userId) fail(400, 'No puedes seguir tu propio perfil.');
-    if (!database.prepare('SELECT 1 FROM users WHERE id=?').get(targetId)) fail(404, 'El perfil no está disponible.');
-    ensureNotBlocked(userId, targetId);
-    const existing = database.prepare('SELECT 1 FROM follows WHERE follower_id=? AND followed_id=?').get(userId, targetId);
-    if (existing) database.prepare('DELETE FROM follows WHERE follower_id=? AND followed_id=?').run(userId, targetId);
-    else database.prepare('INSERT INTO follows (follower_id,followed_id,created_at) VALUES (?,?,?)').run(userId, targetId, now());
+    if (!await database.prepare('SELECT 1 FROM users WHERE id=?').get(targetId)) fail(404, 'El perfil no está disponible.');
+    await ensureNotBlocked(userId, targetId);
+    const existing = await database.prepare('SELECT 1 FROM follows WHERE follower_id=? AND followed_id=?').get(userId, targetId);
+    if (existing) await database.prepare('DELETE FROM follows WHERE follower_id=? AND followed_id=?').run(userId, targetId);
+    else await database.prepare('INSERT INTO follows (follower_id,followed_id,created_at) VALUES (?,?,?)').run(userId, targetId, now());
     return sendJson(response, request, 200, { following: !existing });
   }
 
   if (parts[0] === 'api' && parts[1] === 'community' && parts[2] === 'blocks' && parts.length === 4 && method === 'POST') {
     const targetId = parts[3];
     if (targetId === userId) fail(400, 'No puedes bloquear tu propio perfil.');
-    if (!database.prepare('SELECT 1 FROM users WHERE id=?').get(targetId)) fail(404, 'El perfil no está disponible.');
-    const existing = database.prepare('SELECT 1 FROM blocks WHERE blocker_id=? AND blocked_id=?').get(userId, targetId);
+    if (!await database.prepare('SELECT 1 FROM users WHERE id=?').get(targetId)) fail(404, 'El perfil no está disponible.');
+    const existing = await database.prepare('SELECT 1 FROM blocks WHERE blocker_id=? AND blocked_id=?').get(userId, targetId);
     if (existing) {
-      database.prepare('DELETE FROM blocks WHERE blocker_id=? AND blocked_id=?').run(userId, targetId);
+      await database.prepare('DELETE FROM blocks WHERE blocker_id=? AND blocked_id=?').run(userId, targetId);
     } else {
-      database.prepare('INSERT INTO blocks (blocker_id,blocked_id,created_at) VALUES (?,?,?)').run(userId, targetId, now());
-      database.prepare('DELETE FROM follows WHERE (follower_id=? AND followed_id=?) OR (follower_id=? AND followed_id=?)').run(userId, targetId, targetId, userId);
-      database.prepare(`UPDATE exchange_requests SET status='blocked',updated_at=? WHERE ((requester_id=? AND owner_id=?) OR (requester_id=? AND owner_id=?)) AND status IN ('pending','accepted')`)
+      await database.prepare('INSERT INTO blocks (blocker_id,blocked_id,created_at) VALUES (?,?,?)').run(userId, targetId, now());
+      await database.prepare('DELETE FROM follows WHERE (follower_id=? AND followed_id=?) OR (follower_id=? AND followed_id=?)').run(userId, targetId, targetId, userId);
+      await database.prepare(`UPDATE exchange_requests SET status='blocked',updated_at=? WHERE ((requester_id=? AND owner_id=?) OR (requester_id=? AND owner_id=?)) AND status IN ('pending','accepted')`)
         .run(now(), userId, targetId, targetId, userId);
     }
     return sendJson(response, request, 200, { blocked: !existing });
@@ -708,9 +747,9 @@ async function handleApi(request, response, url) {
     const targetId = textField(body.targetId, 'Elemento reportado', 1, 100);
     const reason = ['spam','harassment','personal_data','scam','other'].includes(body.reason) ? body.reason : 'other';
     let targetUserId = targetType === 'user' ? targetId : '';
-    if (targetType === 'post') targetUserId = database.prepare('SELECT user_id FROM community_posts WHERE id=?').get(targetId)?.user_id || '';
+    if (targetType === 'post') targetUserId = (await database.prepare('SELECT user_id FROM community_posts WHERE id=?').get(targetId))?.user_id || '';
     if (targetType === 'message') {
-      const message = database.prepare(`
+      const message = await database.prepare(`
         SELECT sender_id AS senderId, requester_id AS requesterId, owner_id AS ownerId
         FROM messages m JOIN exchange_requests r ON r.id=m.request_id WHERE m.id=?
       `).get(targetId);
@@ -721,7 +760,7 @@ async function handleApi(request, response, url) {
       }
     }
     if (!['user','post','message'].includes(targetType) || !targetUserId || targetUserId === userId) fail(404, 'El elemento no está disponible para reportar.');
-    database.prepare('INSERT INTO reports (id,reporter_id,target_user_id,target_type,target_id,reason,created_at) VALUES (?,?,?,?,?,?,?)')
+    await database.prepare('INSERT INTO reports (id,reporter_id,target_user_id,target_type,target_id,reason,created_at) VALUES (?,?,?,?,?,?,?)')
       .run(randomUUID(), userId, targetUserId, targetType, targetId, reason, now());
     return sendJson(response, request, 201, { ok: true });
   }
@@ -729,7 +768,7 @@ async function handleApi(request, response, url) {
   if (method === 'POST' && url.pathname === '/api/community/reservations') {
     const body = await readJson(request);
     const eventId = textField(body.eventId, 'Encuentro', 1, 100);
-    database.prepare('INSERT OR IGNORE INTO event_reservations (event_id,user_id,created_at) VALUES (?,?,?)').run(eventId, userId, now());
+    await database.prepare('INSERT INTO event_reservations (event_id,user_id,created_at) VALUES (?,?,?) ON CONFLICT (event_id,user_id) DO NOTHING').run(eventId, userId, now());
     return sendJson(response, request, 201, { reserved: true, charged: false });
   }
 
@@ -781,8 +820,7 @@ server.listen(port, '0.0.0.0', () => {
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     server.close(() => {
-      database.close();
-      process.exit(0);
+      Promise.resolve(closeDatabase()).finally(() => process.exit(0));
     });
   });
 }

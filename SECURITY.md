@@ -2,9 +2,9 @@
 
 ## Estado actual
 
-`server.mjs` implementa una API same-origin con SQLite, registro e inicio de sesión, hash de contraseñas con scrypt, cookies de sesión `HttpOnly`/`SameSite`, token CSRF, validación de entradas, consultas parametrizadas y autorización de ofertas, solicitudes, conversaciones, follows, bloqueos y reportes. Arranca localmente con `npm run start:built`; los datos quedan en `data/lectio.sqlite`.
+`server.mjs` implementa una API same-origin con registro e inicio de sesión, hash de contraseñas con scrypt, cookies de sesión `HttpOnly`/`SameSite`, token CSRF, validación de entradas, consultas parametrizadas y autorización de ofertas, solicitudes, conversaciones, follows, bloqueos y reportes. En local usa SQLite (`data/lectio.sqlite`); con `DATABASE_URL` usa PostgreSQL.
 
-GitHub Pages solo publica el frontend estático. Allí Lectio activa un modo de muestra explícito donde los cambios se guardan en el navegador y no se comparten entre visitantes. Para cuentas, follows, ofertas, Plaza y chat compartidos, hay que desplegar `server.mjs` en un host Node con HTTPS y almacenamiento persistente; Pages por sí solo no ejecuta la API.
+GitHub Pages solo publica el frontend estático. Allí Lectio activa un modo de muestra explícito donde los cambios se guardan en el navegador y no se comparten entre visitantes. Para cuentas, follows, ofertas, Plaza y chat compartidos, hay que desplegar `server.mjs` en un host Node con HTTPS y PostgreSQL; Pages por sí solo no ejecuta la API.
 
 La interfaz también bloquea algunos correos, teléfonos, enlaces, direcciones y credenciales; no habilita el chat hasta aceptar una solicitud; y renderiza texto como texto, nunca como HTML. Estas validaciones de cliente mejoran la experiencia, pero el servidor debe ser siempre la autoridad.
 
@@ -19,4 +19,4 @@ La interfaz también bloquea algunos correos, teléfonos, enlaces, direcciones y
 - Desplegar con una política CSP ajustada, HSTS, `X-Content-Type-Options`, `Referrer-Policy` y una `Permissions-Policy` mínima; registrar eventos de seguridad sin guardar secretos.
 - Probar autorización por objeto, XSS, CSRF, abuso de solicitudes y enumeración de cuentas antes de abrir el servicio al público; preparar respaldo y respuesta a incidentes.
 
-La API actual usa límites de frecuencia en memoria y SQLite local: son adecuados para desarrollo de una instancia, no para escalar varias réplicas. Antes de producción, migra los límites a un almacén compartido, añade verificación/recuperación de correo, limpieza de sesiones, moderación administrativa, respaldos y pruebas de penetración. El pago del encuentro es una muestra y no se procesa.
+La API usa límites de frecuencia en memoria, por lo que debe ejecutarse como una sola instancia hasta moverlos a un almacén compartido. Antes de producción, añade verificación/recuperación de correo, limpieza de sesiones, moderación administrativa, respaldos y pruebas de penetración. No reutilices la SQLite local en Postgres sin un proceso de migración. El pago del encuentro es una muestra y no se procesa.
